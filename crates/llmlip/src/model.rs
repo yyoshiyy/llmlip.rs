@@ -48,7 +48,6 @@ use crate::{
         UmaRoutingMlpConfig, UmaRoutingMlpWeights, UmaRoutingMlpWorkspaceMut,
     },
 };
-#[cfg(test)]
 use e3nn_core::so3::fairchem_esen_so3_batched_matmul_vjp_matrix_write;
 use e3nn_core::{
     activation::{
@@ -20108,7 +20107,11 @@ fn replay_uma_block_vjp_from_replay(
     trace_uma_block_stage(block_index, "vjp.rotate_to_compact_input", stage_start);
 
     let stage_start = uma_trace_start();
-    fairchem_esen_so3_batched_matmul_vjp_matrix(
+    // Forward uses W = W_inv^T, so its matrix adjoint must be transposed
+    // before accumulating into the shared W_inv adjoint.
+    let mut grad_compact_wigner =
+        uninit_model_f64_vec(edge_count * UMA_COMPACT_M_BASIS_DIM * UMA_BASIS_DIM);
+    fairchem_esen_so3_batched_matmul_vjp_matrix_write(
         EsenSo3BatchedMatmulConfig::new(
             UMA_BASIS_DIM,
             UMA_COMPACT_M_BASIS_DIM,
@@ -20116,8 +20119,12 @@ fn replay_uma_block_vjp_from_replay(
         )?,
         &replay.edgewise_concat,
         &grad_rotated,
-        &mut geometry_vjp.grad_wigner_inv,
+        &mut grad_compact_wigner,
     )?;
+    scatter_uma_compact_wigner_rows_to_wigner_inv_vjp(
+        &grad_compact_wigner,
+        &mut geometry_vjp.grad_wigner_inv,
+    );
     trace_uma_block_stage(block_index, "vjp.rotate_to_compact_matrix", stage_start);
 
     let mut grad_norm1_out = vec![0.0; node_feature_len];
@@ -20445,7 +20452,11 @@ fn replay_uma_block_vjp_profiled(
     }
 
     let t = Instant::now();
-    fairchem_esen_so3_batched_matmul_vjp_matrix(
+    // Forward uses W = W_inv^T, so its matrix adjoint must be transposed
+    // before accumulating into the shared W_inv adjoint.
+    let mut grad_compact_wigner =
+        uninit_model_f64_vec(edge_count * UMA_COMPACT_M_BASIS_DIM * UMA_BASIS_DIM);
+    fairchem_esen_so3_batched_matmul_vjp_matrix_write(
         EsenSo3BatchedMatmulConfig::new(
             UMA_BASIS_DIM,
             UMA_COMPACT_M_BASIS_DIM,
@@ -20453,8 +20464,12 @@ fn replay_uma_block_vjp_profiled(
         )?,
         &replay.edgewise_concat,
         &grad_rotated,
-        &mut geometry_vjp.grad_wigner_inv,
+        &mut grad_compact_wigner,
     )?;
+    scatter_uma_compact_wigner_rows_to_wigner_inv_vjp(
+        &grad_compact_wigner,
+        &mut geometry_vjp.grad_wigner_inv,
+    );
     if let Some(p) = profile_block.as_deref_mut() {
         p.rotate_to_compact_matrix_vjp.record(t);
     }
@@ -38837,3 +38852,7 @@ mod tests_f32 {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "uma_wigner_vjp_tests.rs"]
+mod uma_wigner_vjp_tests;
