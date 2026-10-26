@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export UMA-S-1.2 checkpoint tensors into a pinned `.e3rs` handoff.
+"""Export pinned UMA-S-1.2 or UMA-S-1.2.1 checkpoint tensors into a pinned `.e3rs` handoff.
 
 This is a reference-only converter. Rust runtime must read only the produced
 `.e3rs` files and must not depend on Python, PyTorch, or FairChem.
@@ -20,17 +20,12 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-MODEL_KEY = "uma-s-1p2"
+MODEL_KEY = "uma-s-1p2p1"
 ARCHITECTURE = "uma-v1"
-STATE_SCHEMA = "uma-s-1p2-state-dict-v1"
 STATE_DICT_FORMAT = "manifest-f64-tensors-v1"
 RUNTIME_STATUS = "state_dict_export_only_runtime_not_implemented"
-CHECKPOINT_SHA256 = "ba5c0d912efa22dc238e5fb1b5b7f66ee2e68c48c1b95b7cfd7fe1da5938398b"
-CHECKPOINT_SIZE_BYTES = 2_333_393_167
-FAIRCHEM_VERSION = "2.20.0"
-FAIRCHEM_COMMIT = "28292f090743f36c1151002964140b04d4b2c6af"
-DEFAULT_CHECKPOINT = Path("outputs/reference-artifacts/fairchem/uma_s_1p2.pt")
-DEFAULT_OUT = Path("outputs/reference-artifacts/fairchem/uma_s_1p2_state_export.e3rs")
+DEFAULT_CHECKPOINT = Path("outputs/reference-artifacts/fairchem/uma_s_1p2p1.pt")
+DEFAULT_OUT = Path("outputs/reference-artifacts/fairchem/uma_s_1p2p1_state_export.e3rs")
 UMA_TENSOR_PACK_FILENAME = "tensors.pack"
 PACK_MAGIC = b"LLMLIPMPK1"
 PACK_VERSION = 1
@@ -49,6 +44,21 @@ ELEMENT_SYMBOLS = [
     "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th", "Pa",
     "U", "Np", "Pu",
 ]
+
+
+def model_spec(model_key: str) -> dict[str, Any]:
+    # Keep converter and exporter pins in one registry. Rust validates the same
+    # version-specific pins independently when loading the exported bundle.
+    registry = json.loads((Path(__file__).resolve().parents[2] / "converters/models.json").read_text())
+    if model_key not in ("uma-s-1p2", "uma-s-1p2p1"):
+        raise ValueError(f"unsupported UMA model {model_key!r}")
+    return registry["models"][model_key]
+
+
+def validate_model_config(config: Any, model_key: str) -> None:
+    expected = model_spec(model_key)["uma"]["model_id"]
+    if not isinstance(config, Mapping) or config.get("model_id") != expected:
+        raise ValueError(f"checkpoint model_id must be {expected!r} for {model_key}")
 
 
 def digest_file(path: Path, algorithm: str = "sha256") -> str:
@@ -296,7 +306,12 @@ def write_uma_tensor_pack(out_dir: Path, entries: list[dict[str, Any]], payloads
     return pack_path
 
 
-def write_manifest(out_dir: Path, tensors: list[dict[str, Any]], metadata_only: bool) -> None:
+def write_manifest(
+    out_dir: Path, tensors: list[dict[str, Any]], metadata_only: bool, model_key: str = MODEL_KEY,
+) -> None:
+    spec = model_spec(model_key)
+    uma = spec["uma"]
+    checkpoint = spec["checkpoint"]
     manifest = [
         'format_version = "0.1"',
         f'architecture = "{ARCHITECTURE}"',
@@ -322,12 +337,12 @@ def write_manifest(out_dir: Path, tensors: list[dict[str, Any]], metadata_only: 
         '[uma]',
         'state = "uma_state.json"',
         'reference_package = "fairchem"',
-        f'reference_version = "{FAIRCHEM_VERSION}"',
-        f'reference_commit = "{FAIRCHEM_COMMIT}"',
-        f'selected_model = "{MODEL_KEY}"',
-        f'state_schema = "{STATE_SCHEMA}"',
-        f'artifact_sha256 = "{CHECKPOINT_SHA256}"',
-        f'artifact_size_bytes = {CHECKPOINT_SIZE_BYTES}',
+        f'reference_version = "{uma["reference_version"]}"',
+        f'reference_commit = "{uma["reference_commit"]}"',
+        f'selected_model = "{model_key}"',
+        f'state_schema = "{uma["state_schema"]}"',
+        f'artifact_sha256 = "{checkpoint["sha256"]}"',
+        f'artifact_size_bytes = {checkpoint["size_bytes"]}',
         '',
         '[state_dict]',
         f'format = "{STATE_DICT_FORMAT}"',
@@ -351,29 +366,37 @@ def write_manifest(out_dir: Path, tensors: list[dict[str, Any]], metadata_only: 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", choices=("uma-s-1p2", "uma-s-1p2p1"), default=MODEL_KEY,
+                        help="checkpoint version (default: %(default)s)")
     parser.add_argument("--checkpoint-path", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--write-tensors", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    spec = model_spec(args.model)
+    uma = spec["uma"]
+    checkpoint = spec["checkpoint"]
 
     if not args.checkpoint_path.exists():
         raise SystemExit(f"checkpoint not found: {args.checkpoint_path}")
-    if args.checkpoint_path.stat().st_size != CHECKPOINT_SIZE_BYTES:
+    if args.checkpoint_path.stat().st_size != checkpoint["size_bytes"]:
         raise SystemExit("checkpoint byte size mismatch")
-    if digest_file(args.checkpoint_path) != CHECKPOINT_SHA256:
+    if digest_file(args.checkpoint_path) != checkpoint["sha256"]:
         raise SystemExit("checkpoint SHA256 mismatch")
     if args.out_dir.exists() and any(args.out_dir.iterdir()) and not args.force:
         raise SystemExit(f"output directory is non-empty; pass --force: {args.out_dir}")
 
     import torch
 
+    obj = torch.load(args.checkpoint_path, map_location="cpu", weights_only=False)
+    model_config = to_jsonable(getattr(obj, "model_config", None))
+    validate_model_config(model_config, args.model)
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
     tensor_dir = args.out_dir / "tensors"
     if args.write_tensors:
         tensor_dir.mkdir(parents=True, exist_ok=True)
 
-    obj = torch.load(args.checkpoint_path, map_location="cpu", weights_only=False)
     tensors = walk_tensors(obj)
     entries: list[dict[str, Any]] = []
     payloads: list[bytes] = []
@@ -426,18 +449,18 @@ def main() -> None:
             )
 
     state = {
-        "schema_version": STATE_SCHEMA,
-        "selected_model": MODEL_KEY,
+        "schema_version": uma["state_schema"],
+        "selected_model": args.model,
         "state_dict_format": STATE_DICT_FORMAT,
         "reference": {
             "package": "fairchem-core",
-            "version": FAIRCHEM_VERSION,
-            "commit": FAIRCHEM_COMMIT,
+            "version": uma["reference_version"],
+            "commit": uma["reference_commit"],
         },
         "artifact": {
             "path": str(args.checkpoint_path),
-            "sha256": CHECKPOINT_SHA256,
-            "size_bytes": CHECKPOINT_SIZE_BYTES,
+            "sha256": checkpoint["sha256"],
+            "size_bytes": checkpoint["size_bytes"],
         },
         "execution_contract": {
             "status": RUNTIME_STATUS,
@@ -463,12 +486,12 @@ def main() -> None:
             "active_semantic_group_counts": active_semantic_group_counts,
             "active_semantic_group_numel": active_semantic_group_numel,
         },
-        "model_config": to_jsonable(getattr(obj, "model_config", None)),
+        "model_config": model_config,
         "tasks_config": to_jsonable(getattr(obj, "tasks_config", None)),
         "tensors": entries,
     }
     (args.out_dir / "uma_state.json").write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
-    write_manifest(args.out_dir, entries, metadata_only=not args.write_tensors)
+    write_manifest(args.out_dir, entries, metadata_only=not args.write_tensors, model_key=args.model)
     if args.write_tensors:
         pack_path = write_uma_tensor_pack(args.out_dir, entries, payloads)
         print(f"wrote {pack_path}", file=sys.stderr)

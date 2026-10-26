@@ -173,6 +173,7 @@ fn block_fixture() -> Result<BlockFixture, ModelError> {
 fn check_block_wigner_vjp(profiled: bool) -> Result<(), ModelError> {
     let fixture = block_fixture()?;
     let store = UmaTensorStore {
+        composition_include_self: true,
         pack_words: None,
         tensors: HashMap::new(),
         total_bytes: 0,

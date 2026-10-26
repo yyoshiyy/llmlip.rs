@@ -180,17 +180,45 @@ const ESEN_OAM_FAIRCHEM_REFERENCE_COMMIT: &str = "977a80328f2be44649b414a9907a1d
 const ESEN_OAM_STATE_SCHEMA: &str = "esen-oam-state-dict-v1";
 const ESEN_OAM_STATE_DICT_FORMAT: &str = "manifest-f64-tensors-v1";
 const ESEN_OAM_EXPORT_ONLY_STATUS: &str = "state_dict_export_only_runtime_not_implemented";
-const UMA_S_1P2_SELECTED_MODEL: &str = "uma-s-1p2";
-const UMA_S_1P2_ARTIFACT_SHA256: &str =
-    "ba5c0d912efa22dc238e5fb1b5b7f66ee2e68c48c1b95b7cfd7fe1da5938398b";
-const UMA_S_1P2_ARTIFACT_SIZE_BYTES: u64 = 2_333_393_167;
-const UMA_S_1P2_RUNTIME_TENSOR_COUNT: usize = 309;
+const UMA_S_RUNTIME_TENSOR_COUNT: usize = 309;
 const UMA_MIXED_WEIGHT_CACHE_MAX_ENTRIES: usize = 128;
-const UMA_STATE_SCHEMA: &str = "uma-s-1p2-state-dict-v1";
 const UMA_STATE_DICT_FORMAT: &str = "manifest-f64-tensors-v1";
 const UMA_EXPORT_ONLY_STATUS: &str = "state_dict_export_only_runtime_not_implemented";
-const UMA_FAIRCHEM_REFERENCE_VERSION: &str = "2.20.0";
-const UMA_FAIRCHEM_REFERENCE_COMMIT: &str = "28292f090743f36c1151002964140b04d4b2c6af";
+
+#[derive(Clone, Copy, Debug)]
+struct UmaModelSpec {
+    model_id: &'static str,
+    state_schema: &'static str,
+    sha256: &'static str,
+    size_bytes: u64,
+    reference_version: &'static str,
+    reference_commit: &'static str,
+    composition_include_self: bool,
+}
+
+fn uma_model_spec(selected_model: &str) -> Result<UmaModelSpec, ModelError> {
+    match selected_model {
+        "uma-s-1p2" => Ok(UmaModelSpec {
+            model_id: "UMA-S-1.2",
+            state_schema: "uma-s-1p2-state-dict-v1",
+            sha256: "ba5c0d912efa22dc238e5fb1b5b7f66ee2e68c48c1b95b7cfd7fe1da5938398b",
+            size_bytes: 2_333_393_167,
+            reference_version: "2.20.0",
+            reference_commit: "28292f090743f36c1151002964140b04d4b2c6af",
+            composition_include_self: true,
+        }),
+        "uma-s-1p2p1" => Ok(UmaModelSpec {
+            model_id: "UMA-S-1.2.1",
+            state_schema: "uma-s-1p2p1-state-dict-v1",
+            sha256: "b2673b85037b075674c25f55c34ffe1ff1e15db924be977b10a184765df0d5ce",
+            size_bytes: 2_333_393_615,
+            reference_version: "2.22.0",
+            reference_commit: "bb0a062a9a08d8b3ad3995aca5b9765e07804990",
+            composition_include_self: false,
+        }),
+        other => Err(invalid_manifest(format!("unsupported UMA model {other:?}"))),
+    }
+}
 const UMA_INFERENCE_STATE_PREFIX: &str = "ema_state_dict.module.";
 const UMA_RAW_STATE_PREFIX: &str = "model_state_dict.";
 const UMA_EMA_METADATA_TENSOR: &str = "ema_state_dict.n_averaged";
@@ -204,7 +232,6 @@ const UMA_ENERGY_HEAD_EXPERTS: usize = 7;
 const UMA_CHARGE_INDEX_OFFSET: i64 = 100;
 const UMA_CHARGE_BALANCED_CHANNEL_START: usize = 0;
 const UMA_CHARGE_BALANCED_CHANNEL_END: usize = 3;
-const UMA_COMPOSITION_INDEX_REDUCE_INCLUDE_SELF: bool = true;
 const UMA_ELEMENT_REFERENCE_COUNT: usize = 100;
 const UMA_BLOCK_COUNT: usize = 4;
 const UMA_L_MAX: usize = 2;
@@ -2547,6 +2574,7 @@ pub enum UmaTensorPayloadStatus {
 
 #[derive(Clone, Debug)]
 pub struct UmaTensorStore {
+    composition_include_self: bool,
     /// Aligned pack backend。`F64Pack` / `I64Pack` エントリの寿命を保持する。
     pack_words: Option<Arc<Vec<u64>>>,
     tensors: HashMap<String, UmaTensorPayload>,
@@ -2944,20 +2972,14 @@ impl UmaModel {
         let state: serde_json::Value =
             serde_json::from_str(&state_text).map_err(ModelError::UmaStateJson)?;
 
-        expect_uma_json_str(&state, &["schema_version"], UMA_STATE_SCHEMA)?;
+        let spec = uma_model_spec(&uma.selected_model)?;
+        expect_uma_json_str(&state, &["schema_version"], spec.state_schema)?;
+        expect_uma_json_str(&state, &["reference", "version"], spec.reference_version)?;
         expect_uma_json_str(&state, &["selected_model"], &uma.selected_model)?;
         expect_uma_json_str(&state, &["state_dict_format"], UMA_STATE_DICT_FORMAT)?;
-        expect_uma_json_str(
-            &state,
-            &["reference", "commit"],
-            UMA_FAIRCHEM_REFERENCE_COMMIT,
-        )?;
-        expect_uma_json_str(&state, &["artifact", "sha256"], UMA_S_1P2_ARTIFACT_SHA256)?;
-        expect_uma_json_u64(
-            &state,
-            &["artifact", "size_bytes"],
-            UMA_S_1P2_ARTIFACT_SIZE_BYTES,
-        )?;
+        expect_uma_json_str(&state, &["reference", "commit"], spec.reference_commit)?;
+        expect_uma_json_str(&state, &["artifact", "sha256"], spec.sha256)?;
+        expect_uma_json_u64(&state, &["artifact", "size_bytes"], spec.size_bytes)?;
         expect_uma_json_str(
             &state,
             &["execution_contract", "status"],
@@ -2969,7 +2991,7 @@ impl UmaModel {
         let tensor_count = manifest.tensors.len();
         if tensor_count == 0 {
             return Err(invalid_manifest(
-                "UMA-S-1.2 state export must contain tensor specs",
+                "UMA state export must contain tensor specs",
             ));
         }
         let mut total_numel = 0usize;
@@ -3015,7 +3037,11 @@ impl UmaModel {
             Box::new(std::array::from_fn(|_| None))
         };
         validate_uma_state_tensors(&state, &manifest.tensors)?;
-        let payload_load = load_optional_uma_tensor_payloads(root, &manifest.tensors)?;
+        let payload_load = load_optional_uma_tensor_payloads(
+            root,
+            &manifest.tensors,
+            spec.composition_include_self,
+        )?;
         let runtime_model = if has_runtime_tensor_contract {
             payload_load
                 .store
@@ -5393,7 +5419,9 @@ impl<'a> UmaRuntimeTensorView<'a> {
                 *out_value += row_value;
             }
         }
-        let denominator = if UMA_COMPOSITION_INDEX_REDUCE_INCLUDE_SELF {
+        // UMA-S-1.2 included the initial zero in index_reduce(mean). Later
+        // weights use the ordinary mean, preserving composition on replication.
+        let denominator = if self.store.composition_include_self {
             atomic_numbers.len() as f64 + 1.0
         } else {
             atomic_numbers.len() as f64
@@ -31541,9 +31569,9 @@ fn validate_uma_runtime_tensor_contract(specs: &[TensorSpec]) -> Result<bool, Mo
         || by_name.contains_key(UMA_TENSOR_SPHERE_EMBEDDING)
         || by_name.contains_key("ema_state_dict.module.backbone.blocks.0.norm_1.affine_weight");
     if !has_runtime_anchor {
-        if specs.len() == UMA_S_1P2_RUNTIME_TENSOR_COUNT {
+        if specs.len() == UMA_S_RUNTIME_TENSOR_COUNT {
             return Err(invalid_manifest(
-                "UMA-S-1.2 export has the pinned tensor count but no recognized runtime tensors",
+                "UMA export has the pinned tensor count but no recognized runtime tensors",
             ));
         }
         return Ok(false);
@@ -31863,7 +31891,11 @@ const UMA_REQUIRED_RUNTIME_TENSORS: &[(&str, &[usize])] = &[
 ];
 
 fn validate_uma_state_config(state: &serde_json::Value) -> Result<(), ModelError> {
-    expect_uma_json_str(state, &["model_config", "model_id"], "UMA-S-1.2")?;
+    let selected_model = uma_json_path(state, &["selected_model"])?
+        .as_str()
+        .ok_or_else(|| invalid_manifest("UMA selected_model must be a string"))?;
+    let spec = uma_model_spec(selected_model)?;
+    expect_uma_json_str(state, &["model_config", "model_id"], spec.model_id)?;
     expect_uma_json_str(
         state,
         &["model_config", "backbone", "model"],
@@ -32298,6 +32330,7 @@ fn decode_esen_oam_tensor_payload(
 fn load_optional_uma_tensor_payloads(
     root: &Path,
     specs: &[TensorSpec],
+    composition_include_self: bool,
 ) -> Result<UmaTensorPayloadLoad, ModelError> {
     let bin_present_count = specs
         .iter()
@@ -32314,7 +32347,7 @@ fn load_optional_uma_tensor_payloads(
     }
 
     if pack_exists {
-        return load_uma_tensor_payloads_from_pack(root, specs);
+        return load_uma_tensor_payloads_from_pack(root, specs, composition_include_self);
     }
 
     if bin_present_count != specs.len() {
@@ -32324,7 +32357,7 @@ fn load_optional_uma_tensor_payloads(
         )));
     }
 
-    load_uma_tensor_payloads_from_bins(root, specs)
+    load_uma_tensor_payloads_from_bins(root, specs, composition_include_self)
 }
 
 fn verify_uma_tensor_payload_sha256s(root: &Path, specs: &[TensorSpec]) -> Result<(), ModelError> {
@@ -32466,6 +32499,7 @@ fn build_pack_payload_entry(
 fn load_uma_tensor_payloads_from_pack(
     root: &Path,
     specs: &[TensorSpec],
+    composition_include_self: bool,
 ) -> Result<UmaTensorPayloadLoad, ModelError> {
     let pack_specs = uma_tensor_pack_source_specs_from_manifest(root, specs)?;
     let pack_path = uma_tensor_pack_path(root);
@@ -32499,6 +32533,7 @@ fn load_uma_tensor_payloads_from_pack(
         verified_count: specs.len(),
         verified_bytes: pack.total_bytes,
         store: Some(Box::new(UmaTensorStore {
+            composition_include_self,
             pack_words: Some(pack.words),
             tensors,
             total_bytes: pack.total_bytes,
@@ -32536,6 +32571,7 @@ fn load_bin_payload_entry(
 fn load_uma_tensor_payloads_from_bins(
     root: &Path,
     specs: &[TensorSpec],
+    composition_include_self: bool,
 ) -> Result<UmaTensorPayloadLoad, ModelError> {
     // Per-tensor read + SHA256 + decode is independent; parallelize when enabled.
     #[cfg(feature = "parallel")]
@@ -32566,6 +32602,7 @@ fn load_uma_tensor_payloads_from_bins(
         verified_count: specs.len(),
         verified_bytes: total_bytes,
         store: Some(Box::new(UmaTensorStore {
+            composition_include_self,
             pack_words: None,
             tensors,
             total_bytes,
@@ -34264,43 +34301,26 @@ fn validate_esen_oam_manifest(esen: &EsenOamSection) -> Result<(), ModelError> {
 }
 
 fn validate_uma_manifest(uma: &UmaSection) -> Result<(), ModelError> {
+    let spec = uma_model_spec(&uma.selected_model)?;
     validate_relative_path("uma.state", &uma.state)?;
     expect_str("uma.reference_package", &uma.reference_package, "fairchem")?;
     expect_str(
         "uma.reference_version",
         &uma.reference_version,
-        UMA_FAIRCHEM_REFERENCE_VERSION,
+        spec.reference_version,
     )?;
     expect_str(
         "uma.reference_commit",
         &uma.reference_commit,
-        UMA_FAIRCHEM_REFERENCE_COMMIT,
+        spec.reference_commit,
     )?;
-    expect_str(
-        "uma.selected_model",
-        &uma.selected_model,
-        UMA_S_1P2_SELECTED_MODEL,
-    )?;
-    expect_str("uma.state_schema", &uma.state_schema, UMA_STATE_SCHEMA)?;
-    if uma.artifact_sha256.len() != SHA256_HEX_LEN
-        || !uma
-            .artifact_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(invalid_manifest(
-            "uma.artifact_sha256 must be a SHA256 hex digest",
-        ));
-    }
-    expect_str(
-        "uma.artifact_sha256",
-        &uma.artifact_sha256,
-        UMA_S_1P2_ARTIFACT_SHA256,
-    )?;
-    if uma.artifact_size_bytes != UMA_S_1P2_ARTIFACT_SIZE_BYTES {
-        return Err(invalid_manifest(
-            "uma.artifact_size_bytes must match pinned UMA-S-1.2 artifact size",
-        ));
+    expect_str("uma.state_schema", &uma.state_schema, spec.state_schema)?;
+    expect_str("uma.artifact_sha256", &uma.artifact_sha256, spec.sha256)?;
+    if uma.artifact_size_bytes != spec.size_bytes {
+        return Err(invalid_manifest(format!(
+            "uma.artifact_size_bytes must match pinned {} artifact size {}",
+            uma.selected_model, spec.size_bytes,
+        )));
     }
     Ok(())
 }
@@ -38856,3 +38876,7 @@ mod tests_f32 {
 #[cfg(test)]
 #[path = "uma_wigner_vjp_tests.rs"]
 mod uma_wigner_vjp_tests;
+
+#[cfg(test)]
+#[path = "uma_model_version_tests.rs"]
+mod uma_model_version_tests;
