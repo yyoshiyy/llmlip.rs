@@ -32,8 +32,58 @@
         "checkpoint_arg": "--checkpoint-path",
         "out_arg": "--out-dir",
         "extra_args": [
-          "--write-tensors"
+          "--write-tensors",
+          "--model",
+          "uma-s-1p2"
         ]
+      },
+      "uma": {
+        "model_id": "UMA-S-1.2",
+        "state_schema": "uma-s-1p2-state-dict-v1",
+        "reference_version": "2.20.0",
+        "reference_commit": "28292f090743f36c1151002964140b04d4b2c6af"
+      }
+    },
+    "uma-s-1p2p1": {
+      "architecture": "uma-v1",
+      "title": "UMA-S-1.2.1 (Meta FAIR Universal Model for Atoms)",
+      "restricted": true,
+      "redistribution": {
+        "source_checkpoint": "not_redistributed",
+        "converted_e3rs": "not_redistributed",
+        "policy": "converter_only"
+      },
+      "source": {
+        "kind": "huggingface",
+        "repo": "facebook/UMA",
+        "file": "checkpoints/uma-s-1p2p1.pt",
+        "url": "https://huggingface.co/facebook/UMA",
+        "gated": true
+      },
+      "license": {
+        "name": "FAIR Chemistry License (custom terms; review artifact-specific agreement)",
+        "url": "https://huggingface.co/facebook/UMA/blob/main/LICENSE",
+        "acceptance_required": true
+      },
+      "checkpoint": {
+        "sha256": "b2673b85037b075674c25f55c34ffe1ff1e15db924be977b10a184765df0d5ce",
+        "size_bytes": 2333393615
+      },
+      "exporter": {
+        "script": "tools/reference/export_uma_state.py",
+        "checkpoint_arg": "--checkpoint-path",
+        "out_arg": "--out-dir",
+        "extra_args": [
+          "--write-tensors",
+          "--model",
+          "uma-s-1p2p1"
+        ]
+      },
+      "uma": {
+        "model_id": "UMA-S-1.2.1",
+        "state_schema": "uma-s-1p2p1-state-dict-v1",
+        "reference_version": "2.22.0",
+        "reference_commit": "bb0a062a9a08d8b3ad3995aca5b9765e07804990"
       }
     },
     "esen-30m-oam": {
