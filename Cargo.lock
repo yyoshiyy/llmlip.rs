@@ -363,7 +363,7 @@ checksum = "e1d926b4d407d372f141f93bb444696142c29d32962ccbd3531117cf3aa0bfa9"
 [[package]]
 name = "e3nn-core"
 version = "0.1.0"
-source = "git+https://github.com/mizukami-group/e3nn-core-rs?rev=9da369cf1d854da6af1a46928bc953c7966e9382#9da369cf1d854da6af1a46928bc953c7966e9382"
+source = "git+https://github.com/yyoshiyy/e3nn-core-rs?rev=0d3133274e7cb1d4dd7a51765f235194b5a36cea#0d3133274e7cb1d4dd7a51765f235194b5a36cea"
 dependencies = [
  "rayon",
  "thiserror",
