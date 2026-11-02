@@ -24,7 +24,7 @@ todo = "warn"
 indexing_slicing = "allow"
 
 [workspace.dependencies]
-e3nn-core = { git = "https://github.com/mizukami-group/e3nn-core-rs", rev = "9da369cf1d854da6af1a46928bc953c7966e9382" }
+e3nn-core = { git = "https://github.com/yyoshiyy/e3nn-core-rs", rev = "0d3133274e7cb1d4dd7a51765f235194b5a36cea" }
 llmlip = { path = "crates/llmlip", default-features = false }
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
